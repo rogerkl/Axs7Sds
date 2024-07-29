@@ -1,0 +1,21 @@
+plugins {
+    id 'java-library'
+}
+
+sourceCompatibility = 21
+targetCompatibility = 21
+
+repositories {
+    mavenCentral() 
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+  }
+  
+dependencies {
+     testImplementation group: 'junit', name: 'junit', version: '4.+'
+     runtimeOnly 'com.formdev:flatlaf-intellij-themes:3.2.1'
+}  
