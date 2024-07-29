@@ -66,6 +66,7 @@ public class SampleDump extends JFrame implements PanelOperations
    * samplerate = samplerate/1_000_000_000 (rounded to 2 decimals)
    */
   enum BandWidth {
+    BW16("16khz", 25281, 39555.4), //
     BW15("15khz", 26784, 37335.72), //
     BW14("14khz", 28377, 35239.81), //
     BW13_("13.khz", 30064, 33262.37), //
@@ -74,7 +75,6 @@ public class SampleDump extends JFrame implements PanelOperations
     BW11_("11.khz", 35753, 27969.68), //
     BW11("11khz", 37879, 26399.85), //
     BW10("10khz", 40131, 24918.39), //
-    BW16("16khz", 25281, 39555.4), //
     BW9_4("9.4khz", 42518, 23519.45), //
     BW8_9("8.9khz", 45046, 22199.53), //
     BW8_4("8.4khz", 47724, 20953.82), //
