@@ -1,6 +1,11 @@
 plugins {
-    id 'java-library'
+    id 'java'
+    id 'application'    
+    id("com.github.johnrengelman.shadow") version "8.1.1"    
+    id("net.nemerosa.versioning") version "3.1.0"
 }
+
+mainClassName = "axs7sds.SampleDump"
 
 sourceCompatibility = 21
 targetCompatibility = 21
