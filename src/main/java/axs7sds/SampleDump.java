@@ -662,7 +662,12 @@ public class SampleDump extends JFrame implements PanelOperations
   public void saveSample()
   {
     JFileChooser fileChooser = new JFileChooser();
-    fileChooser.setFileFilter(new FileNameExtensionFilter("WAV file", "wav"));
+    fileChooser.setFileFilter(new FileNameExtensionFilter("Audio file",
+        AudioFileFormat.Type.WAVE.getExtension(),
+        AudioFileFormat.Type.AU.getExtension(),
+        AudioFileFormat.Type.AIFF.getExtension(),
+        AudioFileFormat.Type.AIFC.getExtension(),
+        AudioFileFormat.Type.SND.getExtension()));
     if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION)
     {
       try
