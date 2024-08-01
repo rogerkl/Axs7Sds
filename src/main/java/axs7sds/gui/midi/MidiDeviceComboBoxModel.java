@@ -38,9 +38,13 @@ public class MidiDeviceComboBoxModel extends AbstractListModel<MidiDeviceInfo>
       try
       {
         if (!in && MidiSystem.getMidiDevice(info).getMaxReceivers() != 0)
+        {
           devices.add(new MidiDeviceInfo(info.getName(), info));
+        }
         else if (in && MidiSystem.getMidiDevice(info).getMaxTransmitters() != 0)
+        {
           devices.add(new MidiDeviceInfo(info.getName(), info));
+        }
       }
       catch (MidiUnavailableException e)
       {

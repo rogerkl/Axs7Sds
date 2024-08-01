@@ -75,7 +75,7 @@ public class ByteConverter
   /*
    * get 12 bit int value from 2 7 bit bytes
    * - SW represents a 12bit value transmitted as 2 MIDI bytes:
-   * first byte: 0 d4 d3 d2 d1 d0 0 0 
+   * first byte: 0 d4 d3 d2 d1 d0 0 0
    * second byte: 0 d11 d10 d9 d8 d7 d6 d5
    */
   public static int int12BitFrom2Bytes(byte[] bytes, int index)
@@ -86,7 +86,7 @@ public class ByteConverter
   /*
    * get 2 7 bit bytes from 12 bit int value
    * - SW represents a 12bit value transmitted as 2 MIDI bytes:
-   * first byte: 0 d4 d3 d2 d1 d0 0 0 
+   * first byte: 0 d4 d3 d2 d1 d0 0 0
    * second byte: 0 d11 d10 d9 d8 d7 d6 d5
    */
   public static void int12BitTo2Bytes(int value, byte[] bytes, int index)

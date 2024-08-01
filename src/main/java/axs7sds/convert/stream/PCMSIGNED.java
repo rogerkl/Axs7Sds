@@ -3,8 +3,6 @@ package axs7sds.convert.stream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-import javax.imageio.stream.IIOByteBuffer;
-
 public final class PCMSIGNED extends AbstractByteConverter implements ByteConvert
 {
   int     bytes;
@@ -157,9 +155,13 @@ public final class PCMSIGNED extends AbstractByteConverter implements ByteConver
       byteBuffer.put(0, b);
       short s = byteBuffer.getShort(0);
       if (s != i)
+      {
         System.out.println(s);
+      }
       if (da[0] != ((double) i) / ((double) Short.MAX_VALUE))
+      {
         System.out.println(da[0]);
+      }
 
       byteBuffer.putShort(0, (short) -i);
       byteBuffer.get(0, b);
@@ -168,9 +170,13 @@ public final class PCMSIGNED extends AbstractByteConverter implements ByteConver
       byteBuffer.put(0, b);
       s = byteBuffer.getShort(0);
       if (s != -i)
+      {
         System.out.println(s + "<>" + (-i));
+      }
       if (da[0] != ((double) -i) / ((double) Short.MAX_VALUE))
+      {
         System.out.println(da[0]);
+      }
 
     }
   }

@@ -14,6 +14,7 @@ import javax.sound.midi.MidiDevice;
 import javax.swing.GroupLayout;
 import javax.swing.GroupLayout.Alignment;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
@@ -22,20 +23,21 @@ import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.LayoutStyle.ComponentPlacement;
-
-import axs7sds.gui.midi.MidiDeviceComboBoxModel;
-import axs7sds.gui.midi.MidiDeviceComboBoxModel.MidiDeviceInfo;
-
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
-import javax.swing.JCheckBox;
+
+import axs7sds.SampleDump;
+import axs7sds.dsp.MammothFftLoop;
+import axs7sds.gui.midi.MidiDeviceComboBoxModel;
+import axs7sds.gui.midi.MidiDeviceComboBoxModel.MidiDeviceInfo;
 
 public class SampleDumpPanel extends JPanel
 {
   private static final long         serialVersionUID        = 1L;
   private JComboBox<MidiDeviceInfo> cbMidiDeviceIn;
   private JTextField                fileName;
-  private final DecimalFormat       numberInstanceNormalize = (DecimalFormat) NumberFormat.getNumberInstance();
+  private final DecimalFormat       numberInstanceDecimal   = (DecimalFormat) NumberFormat.getNumberInstance();
+  private final DecimalFormat       numberInstancePhaseMult = (DecimalFormat) NumberFormat.getNumberInstance();
   private final DecimalFormat       numberInstanceSamples   = (DecimalFormat) NumberFormat.getNumberInstance();
 
   public interface PanelOperations
@@ -87,6 +89,10 @@ public class SampleDumpPanel extends JPanel
   private JLabel                    lblXfade;
   private JFormattedTextField       edtXFadeLength;
   private JCheckBox                 cbNormalize;
+  private JCheckBox                 cbFftLoop;
+  private JFormattedTextField       edtPhaseMult;
+  private JFormattedTextField       edtBinPower;
+  private JFormattedTextField       edtFadeIn;
 
   /**
    * Create the panel.
@@ -97,13 +103,18 @@ public class SampleDumpPanel extends JPanel
     numberInstanceSamples.setMaximumFractionDigits(0);
     numberInstanceSamples.setParseIntegerOnly(true);
 
-    numberInstanceNormalize.setMaximumIntegerDigits(1);
-    numberInstanceNormalize.setMaximumFractionDigits(38);
-    numberInstanceNormalize.setParseIntegerOnly(false);
-    DecimalFormatSymbols decimalFormatSymbols = numberInstanceNormalize.getDecimalFormatSymbols();
+    numberInstanceDecimal.setMaximumIntegerDigits(1);
+    numberInstanceDecimal.setMaximumFractionDigits(38);
+    numberInstanceDecimal.setParseIntegerOnly(false);
+    DecimalFormatSymbols decimalFormatSymbols = numberInstanceDecimal.getDecimalFormatSymbols();
     decimalFormatSymbols.setDecimalSeparator('.');
     decimalFormatSymbols.setGroupingSeparator(' ');
-    numberInstanceNormalize.setDecimalFormatSymbols(decimalFormatSymbols);
+    numberInstanceDecimal.setDecimalFormatSymbols(decimalFormatSymbols);
+
+    numberInstancePhaseMult.setMaximumIntegerDigits(10);
+    numberInstancePhaseMult.setMaximumFractionDigits(29);
+    numberInstancePhaseMult.setParseIntegerOnly(false);
+    numberInstancePhaseMult.setDecimalFormatSymbols(decimalFormatSymbols);
 
     setLayout(new BorderLayout(0, 0));
 
@@ -193,6 +204,8 @@ public class SampleDumpPanel extends JPanel
       }
     });
 
+    JLabel lblFftLoopGen = new JLabel("FFT loop generator");
+
     JLabel lblSample = new JLabel("Loaded Sample file");
 
     fileName = new JTextField();
@@ -220,7 +233,7 @@ public class SampleDumpPanel extends JPanel
 
     JLabel lblSampleInfo = new JLabel("Sample Info");
 
-    edtNormalize = new JFormattedTextField(numberInstanceNormalize);
+    edtNormalize = new JFormattedTextField(numberInstanceDecimal);
     edtNormalize.setColumns(40);
     edtNormalize.setText("1.");
 
@@ -249,6 +262,39 @@ public class SampleDumpPanel extends JPanel
     edtXFadeLength = new JFormattedTextField(numberInstanceSamples);
     edtXFadeLength.setColumns(5);
     edtXFadeLength.setText("0");
+
+    cbFftLoop = new JCheckBox("");
+    cbFftLoop.addActionListener(new ActionListener()
+    {
+      @Override
+      public void actionPerformed(ActionEvent e)
+      {
+        setFftLoop(cbFftLoop.isSelected());
+      }
+    });
+
+    edtPhaseMult = new JFormattedTextField(numberInstancePhaseMult);
+    edtPhaseMult.setToolTipText(
+        "Multiply phases of fft-bins. This will smear time information and make a more ambient washed out loop");
+    edtPhaseMult.setText("2.");
+    edtPhaseMult.setColumns(40);
+
+    JLabel lblFFTLoopPower = new JLabel("FFT-bin power");
+
+    edtBinPower = new JFormattedTextField(numberInstanceDecimal);
+    edtBinPower.setToolTipText(
+        "Raise amplitude of fft-bins to this value. >1 will enhance stronger frequencies, while <1 will make the amplitudes of different frequencies closer, basicly making the signal more noisy");
+    edtBinPower.setText("1.");
+    edtBinPower.setColumns(40);
+
+    JLabel lblFadein = new JLabel("Fade in");
+
+    edtFadeIn = new JFormattedTextField(numberInstanceSamples);
+    edtFadeIn.setToolTipText("How many samples to use for the fade-in of the sound before the loop starts");
+    edtFadeIn.setText("0");
+    edtFadeIn.setColumns(5);
+
+    JLabel lblPhaseMult = new JLabel("Phase multiplication");
     GroupLayout gl_panel_4 = new GroupLayout(panel_4);
     gl_panel_4.setHorizontalGroup(
         gl_panel_4.createParallelGroup(Alignment.TRAILING)
@@ -259,10 +305,11 @@ public class SampleDumpPanel extends JPanel
                     .addComponent(lblMidiDeviceOut, GroupLayout.PREFERRED_SIZE, 91, GroupLayout.PREFERRED_SIZE)
                     .addComponent(lblSampleNumber, GroupLayout.PREFERRED_SIZE, 91, GroupLayout.PREFERRED_SIZE)
                     .addComponent(lblSampleInfo, GroupLayout.DEFAULT_SIZE, GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(lblFftLoopGen, GroupLayout.DEFAULT_SIZE, GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(lblSample, GroupLayout.DEFAULT_SIZE, GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                 .addPreferredGap(ComponentPlacement.RELATED)
                 .addGroup(gl_panel_4.createParallelGroup(Alignment.LEADING)
-                    .addComponent(taSampleInfo, GroupLayout.DEFAULT_SIZE, 716, Short.MAX_VALUE)
+                    .addComponent(taSampleInfo, GroupLayout.DEFAULT_SIZE, 689, Short.MAX_VALUE)
                     .addGroup(gl_panel_4.createSequentialGroup()
                         .addComponent(spSampleNumber, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE)
                         .addGap(18)
@@ -285,9 +332,23 @@ public class SampleDumpPanel extends JPanel
                         .addComponent(lblXfade)
                         .addPreferredGap(ComponentPlacement.UNRELATED)
                         .addComponent(edtXFadeLength, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE))
-                    .addComponent(cbMidiDeviceOut, 0, 716, Short.MAX_VALUE)
-                    .addComponent(fileName, GroupLayout.DEFAULT_SIZE, 716, Short.MAX_VALUE)
-                    .addComponent(cbMidiDeviceIn, 0, 716, Short.MAX_VALUE))
+                    .addComponent(cbMidiDeviceOut, 0, 689, Short.MAX_VALUE)
+                    .addComponent(fileName, GroupLayout.DEFAULT_SIZE, 689, Short.MAX_VALUE)
+                    .addComponent(cbMidiDeviceIn, 0, 689, Short.MAX_VALUE)
+                    .addGroup(gl_panel_4.createSequentialGroup()
+                        .addComponent(cbFftLoop)
+                        .addPreferredGap(ComponentPlacement.UNRELATED)
+                        .addComponent(lblPhaseMult)
+                        .addPreferredGap(ComponentPlacement.UNRELATED)
+                        .addComponent(edtPhaseMult, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE)
+                        .addGap(12)
+                        .addComponent(lblFFTLoopPower)
+                        .addPreferredGap(ComponentPlacement.UNRELATED)
+                        .addComponent(edtBinPower, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(ComponentPlacement.UNRELATED)
+                        .addComponent(lblFadein)
+                        .addPreferredGap(ComponentPlacement.UNRELATED)
+                        .addComponent(edtFadeIn, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE)))
                 .addContainerGap()));
     gl_panel_4.setVerticalGroup(
         gl_panel_4.createParallelGroup(Alignment.LEADING)
@@ -323,12 +384,25 @@ public class SampleDumpPanel extends JPanel
                         GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(ComponentPlacement.RELATED)
                 .addGroup(gl_panel_4.createParallelGroup(Alignment.BASELINE)
+                    .addComponent(lblFftLoopGen)
+                    .addComponent(cbFftLoop)
+                    .addComponent(lblFFTLoopPower)
+                    .addComponent(edtBinPower, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
+                        GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblFadein)
+                    .addComponent(edtFadeIn, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
+                        GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblPhaseMult)
+                    .addComponent(edtPhaseMult, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
+                        GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(ComponentPlacement.RELATED)
+                .addGroup(gl_panel_4.createParallelGroup(Alignment.BASELINE)
                     .addComponent(fileName, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
                         GroupLayout.PREFERRED_SIZE)
                     .addComponent(lblSample))
                 .addPreferredGap(ComponentPlacement.RELATED)
                 .addGroup(gl_panel_4.createParallelGroup(Alignment.BASELINE)
-                    .addComponent(taSampleInfo, GroupLayout.DEFAULT_SIZE, 175, Short.MAX_VALUE)
+                    .addComponent(taSampleInfo, GroupLayout.DEFAULT_SIZE, 149, Short.MAX_VALUE)
                     .addComponent(lblSampleInfo))
                 .addContainerGap()));
     panel_4.setLayout(gl_panel_4);
@@ -357,7 +431,41 @@ public class SampleDumpPanel extends JPanel
         }
       }
     });
+    edtFadeIn.addPropertyChangeListener(e -> {
+      if ("value".equals(e.getPropertyName()))
+      {
+        setFftLoop(cbFftLoop.isSelected());
+      }
+    });
 
+  }
+
+  protected void setFftLoop(boolean selected)
+  {
+    if (selected)
+    {
+      SwingUtilities.invokeLater(() -> {
+        int loopSize = MammothFftLoop.getFftSize(sampleFileInfo.numSamples(), getFadeIn(),
+            Math.min(sampleFileInfo.numSamples(), SampleDump.MAX_SAMPLES - 100));
+        setNumSamples(loopSize + getFadeIn());
+        setLoopStart(getFadeIn());
+        setLoopEnd(loopSize + getFadeIn());
+        setXfadeLength(0);
+        edtSamples.setEnabled(false);
+        edtLoopEnd.setEnabled(false);
+        edtLoopStart.setEnabled(false);
+        edtXFadeLength.setEnabled(false);
+      });
+    }
+    else
+    {
+      SwingUtilities.invokeLater(() -> {
+        edtSamples.setEnabled(true);
+        edtLoopEnd.setEnabled(true);
+        edtLoopStart.setEnabled(true);
+        edtXFadeLength.setEnabled(true);
+      });
+    }
   }
 
   protected void midiDeviceSelected()
@@ -458,7 +566,7 @@ public class SampleDumpPanel extends JPanel
     return ((MidiDeviceInfo) cbMidiDeviceOut.getSelectedItem()).info();
   }
 
-  public int getSampleNumber()
+  private int getSampleNumber()
   {
     try
     {
@@ -476,18 +584,20 @@ public class SampleDumpPanel extends JPanel
     taSampleInfo.setText(info);
   }
 
-  public boolean normalize()
+  private boolean normalize()
   {
     return cbNormalize.isSelected();
   }
 
-  public double getNormalizeValue()
+  private double getNormalizeValue()
   {
     try
     {
-      double doubleValue = numberInstanceNormalize.parse(edtNormalize.getText()).doubleValue();
+      double doubleValue = numberInstanceDecimal.parse(edtNormalize.getText()).doubleValue();
       if (doubleValue > 1)
+      {
         return 1;
+      }
       return doubleValue;
     }
     catch (ParseException e)
@@ -497,12 +607,14 @@ public class SampleDumpPanel extends JPanel
     }
   }
 
-  public int getNumSamples()
+  private int getNumSamples()
   {
     try
     {
       if (edtSamples.getText().isBlank())
+      {
         return 32752;
+      }
       return numberInstanceSamples.parse(edtSamples.getText()).intValue();
     }
     catch (ParseException e)
@@ -511,12 +623,14 @@ public class SampleDumpPanel extends JPanel
     }
   }
 
-  public int getLoopStart()
+  private int getLoopStart()
   {
     try
     {
       if (edtLoopStart.getText().isBlank())
+      {
         return 0;
+      }
       return numberInstanceSamples.parse(edtLoopStart.getText()).intValue();
     }
     catch (ParseException e)
@@ -525,12 +639,14 @@ public class SampleDumpPanel extends JPanel
     }
   }
 
-  public int getLoopEnd()
+  private int getLoopEnd()
   {
     try
     {
       if (edtLoopEnd.getText().isBlank())
+      {
         return 32752;
+      }
       return numberInstanceSamples.parse(edtLoopEnd.getText()).intValue();
     }
     catch (ParseException e)
@@ -539,12 +655,14 @@ public class SampleDumpPanel extends JPanel
     }
   }
 
-  public int getXfadeLength()
+  private int getXfadeLength()
   {
     try
     {
       if (edtXFadeLength.getText().isBlank())
+      {
         return 0;
+      }
       return numberInstanceSamples.parse(edtXFadeLength.getText()).intValue();
     }
     catch (ParseException e)
@@ -568,8 +686,89 @@ public class SampleDumpPanel extends JPanel
     edtLoopEnd.setText(Integer.toString(loopEnd));
   }
 
+  public void checkFftLoop()
+  {
+    SwingUtilities.invokeLater(() -> setFftLoop(cbFftLoop.isSelected()));
+  }
+
   public void setXfadeLength(int xfadeLength)
   {
     edtXFadeLength.setText(Integer.toString(xfadeLength));
+  }
+
+  public record SamplePanelParameters(
+      int sampleNumber, boolean normalize, double normalizeValue, int numSamples,
+      int loopStart, int loopEnd, int xfadeLength, SampleFileInfo sampleFileInfo,
+      boolean fftLoopGenerate, double phaseMult, double binPower, int fadeIn)
+  {}
+
+  public double getPhaseMult()
+  {
+    try
+    {
+      return numberInstanceDecimal.parse(edtPhaseMult.getText()).doubleValue();
+    }
+    catch (ParseException e)
+    {
+      e.printStackTrace();
+      return 1.;
+    }
+  }
+
+  public double getBinPower()
+  {
+    try
+    {
+      return numberInstanceDecimal.parse(edtBinPower.getText()).doubleValue();
+    }
+    catch (ParseException e)
+    {
+      e.printStackTrace();
+      return 1.;
+    }
+  }
+
+  public int getFadeIn()
+  {
+    try
+    {
+      if (edtFadeIn.getText().isBlank())
+      {
+        return 0;
+      }
+      return numberInstanceSamples.parse(edtFadeIn.getText()).intValue();
+    }
+    catch (ParseException e)
+    {
+      throw new RuntimeException(e.getMessage());
+    }
+  }
+
+  public SamplePanelParameters getParameters()
+  {
+    return new SamplePanelParameters(
+        getSampleNumber(), normalize(), getNormalizeValue(), getNumSamples(),
+        getLoopStart(), getLoopEnd(),
+        getXfadeLength(), sampleFileInfo,
+        cbFftLoop.isSelected(), getPhaseMult(), getBinPower(), getFadeIn());
+  }
+
+  public void setParameters(SamplePanelParameters parameters)
+  {
+    spSampleNumber.setValue(parameters.sampleNumber());
+    cbNormalize.setSelected(parameters.normalize());
+    edtNormalize.setText(Double.toString(parameters.normalizeValue));
+    edtSamples.setText(Integer.toString(parameters.numSamples()));
+    edtLoopStart.setText(Integer.toString(parameters.loopStart()));
+    edtLoopEnd.setText(Integer.toString(parameters.loopEnd()));
+    edtXFadeLength.setText(Integer.toString(parameters.xfadeLength()));
+    cbFftLoop.setSelected(parameters.fftLoopGenerate());
+    edtPhaseMult.setText(Double.toString(parameters.phaseMult()));
+    edtBinPower.setText(Double.toString(parameters.binPower()));
+    edtFadeIn.setText(Integer.toString(parameters.fadeIn()));
+    if (parameters.sampleFileInfo() != null)
+    {
+      setSampleFile(parameters.sampleFileInfo());
+    }
   }
 }

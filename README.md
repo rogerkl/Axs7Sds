@@ -49,9 +49,9 @@ You will get a runnable jar file in build\libs\Axs7Sds-all.jar
   
 **Loop Start:** loop start
   
-**Loop End:** loop end  
+**Loop End:** loop end, by testing it seems like you should at least have the loop end point 10 samples shorter thn the end of the sample, or you will get a discontinuity even if the loop should be perfect.
   
-**X-fade length:** (experimental) if > 0 this will calculate a crossfade for the loop. This will be done on the wave data before sent by fading out the sample from loopend-xfadelength and fading in data from loopstart-xfadelength, so that means loop-start must be the same or later than the xfade-length
+**X-fade length:** (experimental) if > 0 this will calculate a crossfade for the loop. This will be done on the wave data before sent by fading out the sample from loopend-xfadelength and fading in data from loopstart-xfadelength, so that means loop-start must be the same or later than the xfade-length. See the comment about the loop-end, same apply here, keep the loop end a little shorter than the sample length
   
 **Load Sample:** read audio file to send to sampler  
   

@@ -10,6 +10,9 @@ mainClassName = "axs7sds.SampleDump"
 sourceCompatibility = 21
 targetCompatibility = 21
 
+compileJava.options.encoding = "UTF-8"
+compileTestJava.options.encoding = "UTF-8"
+
 repositories {
     mavenCentral() 
 }
@@ -21,8 +24,14 @@ java {
   }
   
 dependencies {
-     testImplementation group: 'junit', name: 'junit', version: '4.+'
-     runtimeOnly 'com.formdev:flatlaf-intellij-themes:3.2.1'
+    implementation ('edu.mines.jtk:edu-mines-jtk:1.1.0') {
+      //excluding dependencies we don't need
+      exclude group: "org.jogamp.jogl"
+      exclude group: "org.jogamp.gluegen"
+      exclude group: "com.googlecode.netlib-java"
+    }
+    testImplementation group: 'junit', name: 'junit', version: '4.+'
+    runtimeOnly 'com.formdev:flatlaf-intellij-themes:3.2.1'
 }
 
 jar {

@@ -28,9 +28,11 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 
 import axs7sds.convert.stream.ByteConvert;
 import axs7sds.convert.stream.ByteConvertFactory;
+import axs7sds.dsp.MammothFftLoop;
 import axs7sds.gui.SampleDumpPanel;
 import axs7sds.gui.SampleDumpPanel.PanelOperations;
 import axs7sds.gui.SampleDumpPanel.SampleFileInfo;
+import axs7sds.gui.SampleDumpPanel.SamplePanelParameters;
 import axs7sds.midi.ByteConverter;
 
 @SuppressWarnings("serial")
@@ -41,15 +43,21 @@ public class SampleDump extends JFrame implements PanelOperations
   private static final byte[]              REQUEST_SAMPLEDUMP = new byte[]{(byte) 0xF0, 0x7E, 0x0, 0x0, 0x0,
       (byte) 0xF7};
   private SampleDumpPanel                  sampleDumpPanel;
-  final static int                         MAX_SAMPLES        = 32752;
+  public final static int                  MAX_SAMPLES        = 32752;
   double[]                                 sampleData         = null;
   int                                      numSamples         = 0;
   private AudioFormat                      format;
   ConcurrentLinkedQueue<MidiMessageRecord> messages           = new ConcurrentLinkedQueue<>();
   private MidiDevice                       midiOut;
   AtomicBoolean                            stopThread         = new AtomicBoolean();
-  boolean                                  debug              = true;
-  boolean                                  trace              = true;
+  boolean                                  debug              = booleanProp("debug");
+  boolean                                  trace              = booleanProp("trace");
+  private SamplePanelParameters            samplePanelParameters;
+
+  static boolean booleanProp(String property)
+  {
+    return "true".equalsIgnoreCase(System.getProperty(property, "false"));
+  }
 
   enum LoopMode {
     Looping;
@@ -60,8 +68,8 @@ public class SampleDump extends JFrame implements PanelOperations
     }
   }
 
-  /* Standard bandwidths and the periods returned from the sampler. 
-   * Assuming samplerate rounded to 2 decimals to make it possible to do the conversion both ways:   
+  /* Standard bandwidths and the periods returned from the sampler.
+   * Assuming samplerate rounded to 2 decimals to make it possible to do the conversion both ways:
    * Period = 1_000_000_000/samplerate (rounded to 0 decimals)
    * samplerate = samplerate/1_000_000_000 (rounded to 2 decimals)
    */
@@ -141,11 +149,17 @@ public class SampleDump extends JFrame implements PanelOperations
     public SampleHeader
     {
       if (numSamples > MAX_SAMPLES)
+      {
         numSamples = MAX_SAMPLES;
+      }
       if (loopEnd > numSamples)
+      {
         loopEnd = numSamples;
+      }
       if (loopStart > loopEnd)
+      {
         loopStart = 0;
+      }
     }
 
     byte[] getBytes()
@@ -158,15 +172,20 @@ public class SampleDump extends JFrame implements PanelOperations
       header[4] = 0; //reserved
       header[5] = (byte) bits; //bits
       ByteConverter.intTo3Bytes((int) (1000000000d / sampleRate), header, 6);
-      ByteConverter.intTo3Bytes(numSamples, header, 9);
+      ByteConverter.intTo3Bytes(nunSamplesWithLoopFix(), header, 9);//loop trouble
       ByteConverter.intTo3Bytes(loopStart, header, 12);
       ByteConverter.intTo3Bytes(loopEnd, header, 15);
       header[18] = loopMode.code(); //looping
       return header;
     }
 
+    public int nunSamplesWithLoopFix()
+    {
+      return Math.max(Math.min(numSamples + 100, MAX_SAMPLES), Math.min(numSamples + 200, MAX_SAMPLES));
+    }
+
     /**
-     * Offset value for 0 for number of bits in sampleHeader 
+     * Offset value for 0 for number of bits in sampleHeader
      * @return
      */
     public int offsetValueFor0()
@@ -176,9 +195,11 @@ public class SampleDump extends JFrame implements PanelOperations
 
     public int numBlocks()
     {
-      int numBlocks = numSamples / SampleBlock.NUM_SAMPLES_IN_BLOCK;
+      int numBlocks = nunSamplesWithLoopFix() / SampleBlock.NUM_SAMPLES_IN_BLOCK;
       if (numBlocks > SampleBlock.NUM_BLOCKS)
+      {
         numBlocks = SampleBlock.NUM_BLOCKS;
+      }
       return numBlocks;
     }
 
@@ -426,37 +447,51 @@ public class SampleDump extends JFrame implements PanelOperations
   private void debug(double val)
   {
     if (debug)
+    {
       System.out.println(val);
+    }
   }
 
   private void debug(byte val)
   {
     if (debug)
+    {
       System.out.println(val);
+    }
   }
 
   private void debug(String message)
   {
     if (debug)
+    {
       System.out.println(message);
+    }
   }
 
+  @SuppressWarnings("unused")
   private void trace(double val)
   {
     if (trace)
+    {
       System.out.println(val);
+    }
   }
 
+  @SuppressWarnings("unused")
   private void trace(byte val)
   {
     if (trace)
+    {
       System.out.println(val);
+    }
   }
 
   private void trace(String message)
   {
     if (trace)
+    {
       System.out.println(message);
+    }
   }
 
   @Override
@@ -464,12 +499,13 @@ public class SampleDump extends JFrame implements PanelOperations
   {
     try
     {
+      samplePanelParameters = sampleDumpPanel.getParameters();
       stopThread.set(false);
       new ReceiveThread().start();
       midiOut = MidiSystem.getMidiDevice(sampleDumpPanel.getSelectedMidiDeviceOut());
       midiOut.open();
 
-      REQUEST_SAMPLEDUMP[3] = (byte) sampleDumpPanel.getSampleNumber();
+      REQUEST_SAMPLEDUMP[3] = (byte) samplePanelParameters.sampleNumber();
 
       sendSysEx("Requesting sample dump", REQUEST_SAMPLEDUMP);
       if (receiveSysEx(SAMPLE_HEADER, System.currentTimeMillis(), 20_000))
@@ -515,6 +551,7 @@ public class SampleDump extends JFrame implements PanelOperations
   @Override
   public void transmit()
   {
+    samplePanelParameters = sampleDumpPanel.getParameters();
     ProgressMonitor progressMonitor = new ProgressMonitor(sampleDumpPanel, "Sending data", "Start", 0, 547);
     new Thread(() -> _transmit(progressMonitor)).start();
   }
@@ -558,14 +595,16 @@ public class SampleDump extends JFrame implements PanelOperations
       double[] sampleDataCopy = getSampleDataWithXFade(sampleHeader);
 
       double max = 0.;
-      double normalize = sampleDumpPanel.getNormalizeValue(); //normalize to get highest snr as possible for 12 bits
+      double normalize = samplePanelParameters.normalizeValue(); //normalize to get highest snr as possible for 12 bits
       for (int i = 0; i < sampleHeader.numSamples(); i++)
       {
         double sample = Math.abs(sampleDataCopy[i]);
         if (sample > max)
+        {
           max = sample;
+        }
       }
-      if (max > 0 && sampleDumpPanel.normalize())
+      if (max > 0 && samplePanelParameters.normalize())
       {
         normalize = normalize * 1. / max;
       }
@@ -615,26 +654,37 @@ public class SampleDump extends JFrame implements PanelOperations
 
   private SampleHeader getSampleHeader(int bits)
   {
-    SampleHeader sampleHeader = new SampleHeader(sampleDumpPanel.getSampleNumber(), bits, format.getSampleRate(),
-        sampleDumpPanel.getNumSamples(), sampleDumpPanel.getLoopStart(), sampleDumpPanel.getLoopEnd(),
+    SampleHeader sampleHeader = new SampleHeader(samplePanelParameters.sampleNumber(), bits, format.getSampleRate(),
+        samplePanelParameters.numSamples(), samplePanelParameters.loopStart(),
+        samplePanelParameters.loopEnd(),
         LoopMode.Looping);
     return sampleHeader;
   }
 
   private double[] getSampleDataWithXFade(SampleHeader sampleHeader)
   {
-    double[] sampleDataCopy = Arrays.copyOf(sampleData, sampleHeader.numSamples());
-    int xfadeLength = sampleDumpPanel.getXfadeLength();
-    if (xfadeLength > 0)
+    double[] sampleDataCopy;
+    if (samplePanelParameters.fftLoopGenerate())
     {
-      int xfStartIndex = sampleHeader.loopStart - xfadeLength;//1000-5000 = 5000
-      int xfEndIndex = sampleHeader.loopEnd - xfadeLength;//32752-5000 = 27752
-      for (int i = 0; i < xfadeLength; i++)
+      sampleDataCopy = MammothFftLoop.process(sampleData,
+          samplePanelParameters.numSamples() - samplePanelParameters.fadeIn(), samplePanelParameters.fadeIn(),
+          samplePanelParameters.phaseMult(), samplePanelParameters.binPower());
+    }
+    else
+    {
+      sampleDataCopy = Arrays.copyOf(sampleData, sampleHeader.numSamples());
+      int xfadeLength = samplePanelParameters.xfadeLength();
+      if (xfadeLength > 0)
       {
-        double valEnd = sampleDataCopy[xfEndIndex + i];//27752
-        double valStart = sampleDataCopy[xfStartIndex + i];//5000
-        double d = ((double) (i + 1)) / ((double) (xfadeLength));//0=0 ,4999=1
-        sampleDataCopy[xfEndIndex + i] = valEnd * (1. - d) + valStart * d;
+        int xfStartIndex = sampleHeader.loopStart - xfadeLength;//1000-5000 = 5000
+        int xfEndIndex = sampleHeader.loopEnd - xfadeLength;//32752-5000 = 27752
+        for (int i = 0; i < xfadeLength; i++)
+        {
+          double valEnd = sampleDataCopy[xfEndIndex + i];//27752
+          double valStart = sampleDataCopy[xfStartIndex + i];//5000
+          double d = ((double) (i + 1)) / ((double) (xfadeLength));//0=0 ,4999=1
+          sampleDataCopy[xfEndIndex + i] = valEnd * (1. - d) + valStart * d;
+        }
       }
     }
     return sampleDataCopy;
@@ -651,7 +701,9 @@ public class SampleDump extends JFrame implements PanelOperations
       double in = data[i] * normalize * mult;
 
       if (unsigned)
+      {
         in = in + ranged2;
+      }
 
       outData[i] = (int) in;
     }
@@ -661,6 +713,7 @@ public class SampleDump extends JFrame implements PanelOperations
   @Override
   public void saveSample()
   {
+    samplePanelParameters = sampleDumpPanel.getParameters();
     JFileChooser fileChooser = new JFileChooser();
     fileChooser.setFileFilter(new FileNameExtensionFilter("Audio file",
         AudioFileFormat.Type.WAVE.getExtension(),
@@ -680,7 +733,7 @@ public class SampleDump extends JFrame implements PanelOperations
             format.isBigEndian());
 
         ByteConvert converter = ByteConvertFactory.createConverter(outformat);
-        numSamples = sampleDumpPanel.getNumSamples();
+        numSamples = samplePanelParameters.numSamples();
         File selectedFile = fileChooser.getSelectedFile();
         byte[] convBuffer = new byte[outformat.getFrameSize() * numSamples];
         converter.toBytes(sampleDataCopy, convBuffer, numSamples, 1, 0);
@@ -732,7 +785,8 @@ public class SampleDump extends JFrame implements PanelOperations
             format.getSampleSizeInBits(), numSamples, format.getEncoding().toString()));
         sampleDumpPanel.setNumSamples(numSamples);
         sampleDumpPanel.setLoopStart(0);
-        sampleDumpPanel.setLoopEnd(numSamples);
+        sampleDumpPanel.setLoopEnd(numSamples - 100);
+        sampleDumpPanel.checkFftLoop();
       }
       catch (Exception e)
       {
