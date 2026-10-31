@@ -66,7 +66,7 @@ You will get a runnable jar file in build\libs\Axs7Sds-all.jar
   
 **Load Sample:** read audio file to send to sampler. If the wav file has loop information (a smpl chunk), loop start, end and type are taken from its first loop, and a smpl chunk without loops gives a one shot sample. Without loop information the loop is set from the start to 100 samples before the end.  
   
-**Save Sample:** save audio file received from sampler (or if you have read it from disk previous, it will write that, including truncation the length and doing the xfade calculation if set). The loop is saved in the wav file (smpl chunk), with no loop for a one shot sample.  
+**Save Sample:** save audio file received from sampler (or if you have read it from disk previous, it will write that, including truncation the length and doing the xfade calculation if set). The loop is saved in the wav file (smpl chunk), with no loop for a one shot sample. Audacity ignores the loop in the wav file, so a looped sample also gets a label file with the same name and a .txt extension, which shows the loop as a region in Audacity with File > Import > Labels. `sndfile-info` (in the sndfile-programs package) shows the smpl chunk on the command line.  
   
 **Transmit:** send audio in memory to sampler  
   

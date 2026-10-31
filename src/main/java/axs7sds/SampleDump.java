@@ -22,6 +22,7 @@ import javax.swing.UIManager;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
 import axs7sds.SampleTransfer.ReceivedSample;
+import axs7sds.convert.AudacityLabels;
 import axs7sds.convert.WavLoop;
 import axs7sds.convert.stream.ByteConvert;
 import axs7sds.convert.stream.ByteConvertFactory;
@@ -731,6 +732,7 @@ public class SampleDump extends JFrame implements PanelOperations
         try (AudioInputStream audioInputStream = new AudioInputStream(bais, outformat, numSamples))
         {
           WavLoop.write(audioInputStream, loop.toWav(), selectedFile);
+          AudacityLabels.write(selectedFile, loop.toWav());
         }
         catch (Exception e)
         {

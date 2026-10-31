@@ -1,11 +1,13 @@
 package axs7sds;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.nio.file.Files;
 import java.util.List;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -20,6 +22,7 @@ import org.junit.rules.TemporaryFolder;
 import axs7sds.SampleDump.LoopMode;
 import axs7sds.SampleDump.LoopPoints;
 import axs7sds.SampleDump.SampleHeader;
+import axs7sds.convert.AudacityLabels;
 import axs7sds.convert.WavLoop;
 import axs7sds.convert.WavLoop.Loop;
 
@@ -77,6 +80,35 @@ public class LoopTest
     File file = folder.newFile();
     AudioSystem.write(audio(1000, 16), AudioFileFormat.Type.WAVE, file);
     assertNull(WavLoop.readLoops(file));
+  }
+
+  @Test
+  public void audacityLabelsAtTheLoopSamples() throws Exception
+  {
+    File wav = folder.newFile("sample.wav");
+    List<Loop> loops = List.of(new Loop(17462, 32752, false));
+    WavLoop.write(audio(32752, 16), loops, wav);
+    File labels = AudacityLabels.write(wav, loops);
+    assertEquals(new File(folder.getRoot(), "sample.txt"), labels);
+    String[] label = Files.readString(labels.toPath()).split("\n");
+    assertEquals(1, label.length);
+    String[] fields = label[0].split("\t");
+    assertEquals("loop forward", fields[2]);
+    // the wav file header has the rate as a whole number
+    assertEquals(17462, Math.round(Double.parseDouble(fields[0]) * 39555));
+    assertEquals(32752, Math.round(Double.parseDouble(fields[1]) * 39555));
+
+    assertTrue(Files.readString(AudacityLabels.write(wav, List.of(new Loop(1, 2, true))).toPath())
+        .endsWith("\tloop alternating\n"));
+  }
+
+  @Test
+  public void noAudacityLabelsForOneShot() throws Exception
+  {
+    File wav = folder.newFile("oneshot.wav");
+    WavLoop.write(audio(1000, 16), List.of(), wav);
+    assertNull(AudacityLabels.write(wav, List.of()));
+    assertFalse(AudacityLabels.labelFileFor(wav).exists());
   }
 
   @Test
