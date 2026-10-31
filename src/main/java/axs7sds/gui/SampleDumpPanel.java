@@ -27,6 +27,7 @@ import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 
 import axs7sds.SampleDump;
+import axs7sds.SampleDump.LoopMode;
 import axs7sds.dsp.MammothFftLoop;
 import axs7sds.gui.midi.MidiDeviceComboBoxModel;
 import axs7sds.gui.midi.MidiDeviceComboBoxModel.MidiDeviceInfo;
@@ -90,6 +91,7 @@ public class SampleDumpPanel extends JPanel
   private JFormattedTextField       edtLoopStart;
   private JLabel                    lblLoopEnd;
   private JFormattedTextField       edtLoopEnd;
+  private JComboBox<LoopMode>       cbLoopMode;
   private JLabel                    lblXfade;
   private JFormattedTextField       edtXFadeLength;
   private JCheckBox                 cbNormalize;
@@ -261,6 +263,9 @@ public class SampleDumpPanel extends JPanel
     edtLoopEnd.setText("32752");
     edtLoopEnd.setColumns(5);
 
+    cbLoopMode = new JComboBox<>(LoopMode.values());
+    cbLoopMode.setToolTipText("Loop type. For a one shot sample, set loop start and end to the same point");
+
     lblXfade = new JLabel("X-fade length");
 
     edtXFadeLength = new JFormattedTextField(numberInstanceSamples);
@@ -332,6 +337,9 @@ public class SampleDumpPanel extends JPanel
                         .addComponent(lblLoopEnd)
                         .addPreferredGap(ComponentPlacement.UNRELATED)
                         .addComponent(edtLoopEnd, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(ComponentPlacement.RELATED)
+                        .addComponent(cbLoopMode, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
+                            GroupLayout.PREFERRED_SIZE)
                         .addGap(18)
                         .addComponent(lblXfade)
                         .addPreferredGap(ComponentPlacement.UNRELATED)
@@ -382,6 +390,8 @@ public class SampleDumpPanel extends JPanel
                     .addComponent(lblLoopStart)
                     .addComponent(lblLoopEnd)
                     .addComponent(edtLoopEnd, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
+                        GroupLayout.PREFERRED_SIZE)
+                    .addComponent(cbLoopMode, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
                         GroupLayout.PREFERRED_SIZE)
                     .addComponent(lblXfade)
                     .addComponent(edtXFadeLength, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE,
@@ -694,6 +704,11 @@ public class SampleDumpPanel extends JPanel
     edtLoopEnd.setText(Integer.toString(loopEnd));
   }
 
+  public void setLoopMode(LoopMode loopMode)
+  {
+    cbLoopMode.setSelectedItem(loopMode);
+  }
+
   public void checkFftLoop()
   {
     SwingUtilities.invokeLater(() -> setFftLoop(cbFftLoop.isSelected()));
@@ -707,7 +722,7 @@ public class SampleDumpPanel extends JPanel
   public record SamplePanelParameters(
       int sampleNumber, boolean normalize, double normalizeValue, int numSamples,
       int loopStart, int loopEnd, int xfadeLength, SampleFileInfo sampleFileInfo,
-      boolean fftLoopGenerate, double phaseMult, double binPower, int fadeIn)
+      boolean fftLoopGenerate, double phaseMult, double binPower, int fadeIn, LoopMode loopMode)
   {}
 
   public double getPhaseMult()
@@ -758,7 +773,7 @@ public class SampleDumpPanel extends JPanel
         getSampleNumber(), normalize(), getNormalizeValue(), getNumSamples(),
         getLoopStart(), getLoopEnd(),
         getXfadeLength(), sampleFileInfo,
-        cbFftLoop.isSelected(), getPhaseMult(), getBinPower(), getFadeIn());
+        cbFftLoop.isSelected(), getPhaseMult(), getBinPower(), getFadeIn(), (LoopMode) cbLoopMode.getSelectedItem());
   }
 
   public void setParameters(SamplePanelParameters parameters)
@@ -774,6 +789,7 @@ public class SampleDumpPanel extends JPanel
     edtPhaseMult.setText(Double.toString(parameters.phaseMult()));
     edtBinPower.setText(Double.toString(parameters.binPower()));
     edtFadeIn.setText(Integer.toString(parameters.fadeIn()));
+    cbLoopMode.setSelectedItem(parameters.loopMode());
     if (parameters.sampleFileInfo() != null)
     {
       setSampleFile(parameters.sampleFileInfo());

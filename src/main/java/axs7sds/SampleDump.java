@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
@@ -21,6 +22,7 @@ import javax.swing.UIManager;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
 import axs7sds.SampleTransfer.ReceivedSample;
+import axs7sds.convert.WavLoop;
 import axs7sds.convert.stream.ByteConvert;
 import axs7sds.convert.stream.ByteConvertFactory;
 import axs7sds.dsp.MammothFftLoop;
@@ -50,12 +52,80 @@ public class SampleDump extends JFrame implements PanelOperations
     return "true".equalsIgnoreCase(System.getProperty(property, "false"));
   }
 
-  enum LoopMode {
-    Looping;
+  /**
+   * Loop type in the sample header. There is no one shot type, the sampler plays a sample as one shot when the loop
+   * is shorter than 5 samples.
+   */
+  public enum LoopMode {
+    Looping(0, "Forward"), Alternating(1, "Alternating");
+
+    private final int    code;
+    private final String description;
+
+    private LoopMode(int code, String description)
+    {
+      this.code = code;
+      this.description = description;
+    }
 
     byte code()
     {
-      return 0;
+      return (byte) code;
+    }
+
+    static LoopMode fromCode(int code)
+    {
+      return code == Alternating.code ? Alternating : Looping;
+    }
+
+    @Override
+    public String toString()
+    {
+      return description;
+    }
+  }
+
+  /**
+   * Loop points as the sampler has them, where the end is after the last sample in the loop, and is also the end of
+   * the sample.
+   */
+  record LoopPoints(int start, int end, LoopMode mode)
+  {
+    /**
+     * The sampler plays a sample as one shot when the loop is shorter than 5 samples
+     */
+    boolean oneShot()
+    {
+      return end - start < 5;
+    }
+
+    /**
+     * @return the loop for a wav file, no loop for a one shot sample
+     */
+    List<WavLoop.Loop> toWav()
+    {
+      return oneShot() ? List.of() : List.of(new WavLoop.Loop(start, end, mode == LoopMode.Alternating));
+    }
+
+    /**
+     * @param loops the loops from a wav file, null if it has no loop information
+     * @param ratio how much the sample has been resampled, new rate / file rate
+     * @param numSamples the number of samples after resampling and truncating
+     */
+    static LoopPoints fromWav(List<WavLoop.Loop> loops, double ratio, int numSamples)
+    {
+      if (loops == null)
+      {
+        return new LoopPoints(0, Math.max(0, numSamples - 100), LoopMode.Looping);
+      }
+      if (loops.isEmpty())
+      {
+        return new LoopPoints(numSamples, numSamples, LoopMode.Looping);
+      }
+      WavLoop.Loop loop = loops.get(0);
+      int end = Math.min((int) Math.round(loop.end() * ratio), numSamples);
+      int start = Math.min((int) Math.round(loop.start() * ratio), end);
+      return new LoopPoints(start, end, loop.alternating() ? LoopMode.Alternating : LoopMode.Looping);
     }
   }
 
@@ -255,7 +325,7 @@ public class SampleDump extends JFrame implements PanelOperations
           ByteConverter.intFrom3Bytes(header, 9),
           ByteConverter.intFrom3Bytes(header, 12),
           ByteConverter.intFrom3Bytes(header, 15),
-          LoopMode.Looping);
+          LoopMode.fromCode(header[18]));
     }
   }
 
@@ -450,6 +520,7 @@ public class SampleDump extends JFrame implements PanelOperations
         sampleDumpPanel.setNumSamples(receivedSamples);
         sampleDumpPanel.setLoopStart(Math.min(sampleHeader.loopStart(), receivedSamples));
         sampleDumpPanel.setLoopEnd(Math.min(sampleHeader.loopEnd(), receivedSamples));
+        sampleDumpPanel.setLoopMode(sampleHeader.loopMode());
         if (receivedSamples < sampleHeader.numSamples() || received.checksumErrors() > 0 || !received.validPeriod())
         {
           JOptionPane.showMessageDialog(this, "Received " + receivedSamples + " of " + sampleHeader.numSamples()
@@ -573,7 +644,7 @@ public class SampleDump extends JFrame implements PanelOperations
     SampleHeader sampleHeader = new SampleHeader(samplePanelParameters.sampleNumber(), bits, format.getSampleRate(),
         samplePanelParameters.numSamples(), samplePanelParameters.loopStart(),
         samplePanelParameters.loopEnd(),
-        LoopMode.Looping);
+        samplePanelParameters.loopMode());
     return sampleHeader;
   }
 
@@ -656,9 +727,10 @@ public class SampleDump extends JFrame implements PanelOperations
 
         ByteArrayInputStream bais = new ByteArrayInputStream(convBuffer);
 
+        LoopPoints loop = new LoopPoints(sampleHeader.loopStart(), sampleHeader.loopEnd(), sampleHeader.loopMode());
         try (AudioInputStream audioInputStream = new AudioInputStream(bais, outformat, numSamples))
         {
-          AudioSystem.write(audioInputStream, AudioFileFormat.Type.WAVE, selectedFile);
+          WavLoop.write(audioInputStream, loop.toWav(), selectedFile);
         }
         catch (Exception e)
         {
@@ -714,9 +786,12 @@ public class SampleDump extends JFrame implements PanelOperations
         sampleDumpPanel.setSampleFile(new SampleFileInfo(selectedFile, fileFormat.getChannels(), sampleRate,
             fileFormat.getSampleSizeInBits(), numSamples, fileFormat.getEncoding().toString(),
             resample ? fileFormat.getSampleRate() : sampleRate));
+        double ratio = resample ? bandWidth.getSampleRate() / fileFormat.getSampleRate() : 1.;
+        LoopPoints loop = LoopPoints.fromWav(WavLoop.readLoops(selectedFile), ratio, numSamples);
         sampleDumpPanel.setNumSamples(numSamples);
-        sampleDumpPanel.setLoopStart(0);
-        sampleDumpPanel.setLoopEnd(numSamples - 100);
+        sampleDumpPanel.setLoopStart(loop.start());
+        sampleDumpPanel.setLoopEnd(loop.end());
+        sampleDumpPanel.setLoopMode(loop.mode());
         sampleDumpPanel.checkFftLoop();
       }
       catch (Exception e)

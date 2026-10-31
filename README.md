@@ -8,6 +8,7 @@ needs to use a specific implementation using their protocol to work.
 ## What's currently working
 * Transmitting sample file to the sampler, optionally with loop start/end
 * Receiving a sample from the sampler, which can then be saved as a wav file
+* Loop start, end and type (forward or alternating) are kept when transmitting, receiving, saving and loading
 
 Only tested on my X7000 with version 1.6 firmware.
 
@@ -59,11 +60,13 @@ You will get a runnable jar file in build\libs\Axs7Sds-all.jar
   
 **Loop End:** loop end, by testing it seems like you should at least have the loop end point 10 samples shorter thn the end of the sample, or you will get a discontinuity even if the loop should be perfect. The sampler also uses the loop end as the end of the sample, anything after it is not kept.
   
+**Loop type:** Forward or Alternating (back and forth). There is no one shot type, the sampler plays a sample as one shot when the loop is shorter than 5 samples, so for a one shot sample set loop start and end to the same point.
+  
 **X-fade length:** (experimental) if > 0 this will calculate a crossfade for the loop. This will be done on the wave data before sent by fading out the sample from loopend-xfadelength and fading in data from loopstart-xfadelength, so that means loop-start must be the same or later than the xfade-length. See the comment about the loop-end, same apply here, keep the loop end a little shorter than the sample length
   
-**Load Sample:** read audio file to send to sampler  
+**Load Sample:** read audio file to send to sampler. If the wav file has loop information (a smpl chunk), loop start, end and type are taken from its first loop, and a smpl chunk without loops gives a one shot sample. Without loop information the loop is set from the start to 100 samples before the end.  
   
-**Save Sample:** save audio file received from sampler (or if you have read it from disk previous, it will write that, including truncation the length and doing the xfade calculation if set)  
+**Save Sample:** save audio file received from sampler (or if you have read it from disk previous, it will write that, including truncation the length and doing the xfade calculation if set). The loop is saved in the wav file (smpl chunk), with no loop for a one shot sample.  
   
 **Transmit:** send audio in memory to sampler  
   
@@ -72,13 +75,15 @@ You will get a runnable jar file in build\libs\Axs7Sds-all.jar
 **Exit:** exit the program
 
 ## Testing with the sampler
-`HardwareLoopback` sends test sines at a few sample rates to the sampler, receives them back and checks that the
-data and pitch survive. It overwrites the given sample slot on the sampler. The sent and received samples are saved
-as wav files in build/loopback.
+`HardwareLoopback` sends test sines to the sampler, receives them back and checks that the data, pitch and loop
+survive, at a few sample rates and with forward, alternating and one shot loops. The received samples are saved and
+read back as wav files with their loop. It overwrites the given sample slot on the sampler. The sent and received
+samples are kept in build/loopback.
 
     ./gradlew hardwareLoopback -Pdevice="XT [hw:0,0,0]" -Pslot=1
-    ./gradlew hardwareLoopback -Pdevice="XT [hw:0,0,0]" -Pslot=1 -Prates=44100,22050 -Pdebug=true
+    ./gradlew hardwareLoopback -Pdevice="XT [hw:0,0,0]" -Pslot=1 -Ptests=rates -Prates=44100,22050 -Pdebug=true
 
-`-Pdevice` is part of the MIDI device name, used for both input and output.
+`-Pdevice` is part of the MIDI device name, used for both input and output. `-Ptests` is `rates` or `loops` to
+run only those tests.
 
 

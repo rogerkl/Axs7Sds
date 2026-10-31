@@ -6,32 +6,36 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.function.IntFunction;
 
 import javax.sound.midi.MidiDevice;
 import javax.sound.midi.MidiSystem;
 import javax.sound.midi.Sequencer;
 import javax.sound.midi.Synthesizer;
-import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
 
 import axs7sds.SampleDump.BandWidth;
 import axs7sds.SampleDump.LoopMode;
+import axs7sds.SampleDump.LoopPoints;
 import axs7sds.SampleDump.SampleHeader;
 import axs7sds.SampleTransfer.ReceivedSample;
+import axs7sds.convert.WavLoop;
 import axs7sds.dsp.Resampler;
 import axs7sds.midi.ByteConverter;
 
 /**
- * Transmits test sines to the sampler and receives them back, to check the transfer and that the pitch survives.
- * The sines are resampled to the nearest rate the sampler plays at, the same way as when a file is loaded.
+ * Transmits test sines to the sampler and receives them back, to check the transfer and that the pitch and loop
+ * survive. The sines are resampled to the nearest rate the sampler plays at, the same way as when a file is loaded,
+ * and the received samples are saved and read back as wav files with their loop, as Save/Load Sample does.
  * Needs the hardware, so it is not a unit test.
  *
  * WARNING: overwrites the given sample slot on the sampler.
  *
  * <pre>
- * ./gradlew hardwareLoopback -Pdevice="XT [hw:0,0,0]" -Pslot=1 [-Prates=39555.4,48000] [-Pdebug=true]
+ * ./gradlew hardwareLoopback -Pdevice="XT [hw:0,0,0]" -Pslot=1 [-Prates=39555.4,48000] [-Ptests=rates|loops]
+ *     [-Pdebug=true]
  * </pre>
  *
  * The sent and received samples are saved as wav files in build/loopback.
@@ -45,7 +49,8 @@ public class HardwareLoopback
   {
     if (args.length < 2 || args[1].isBlank())
     {
-      System.err.println("Usage: HardwareLoopback <midi device name> <sample slot 1-6, will be overwritten> [rates]");
+      System.err.println("Usage: HardwareLoopback <midi device name> <sample slot 1-6, will be overwritten> [rates]"
+          + " [rates|loops]");
       System.exit(1);
     }
     int slot = Integer.parseInt(args[1]);
@@ -56,6 +61,7 @@ public class HardwareLoopback
     double[] rates = args.length > 2 && !args[2].isBlank()
         ? Arrays.stream(args[2].split(",")).mapToDouble(Double::parseDouble).toArray()
         : new double[]{39555.4, 48000, 44100, 22050, 10000};
+    String tests = args.length > 3 && !args[3].isBlank() ? args[3] : "rates,loops";
     boolean debug = SampleDump.booleanProp("debug");
 
     MidiDevice.Info in = findDevice(args[0], true);
@@ -63,9 +69,21 @@ public class HardwareLoopback
     Path dir = Path.of("build", "loopback");
     Files.createDirectories(dir);
     System.out.println("in: " + in.getName() + ", out: " + out.getName() + ", sample slot " + slot);
-    for (double rate : rates)
+    if (tests.contains("rates"))
     {
-      loopback(in, out, slot, rate, dir, debug);
+      for (double rate : rates)
+      {
+        loopback(in, out, slot, String.format("%.0f", rate), rate, n -> new LoopPoints(0, n - 100, LoopMode.Looping),
+            dir, debug);
+      }
+    }
+    if (tests.contains("loops"))
+    {
+      double rate = BandWidth.BW16.getSampleRate();
+      loopback(in, out, slot, "forward", rate, n -> new LoopPoints(1000, n - 100, LoopMode.Looping), dir, debug);
+      loopback(in, out, slot, "alternating", rate, n -> new LoopPoints(1000, n - 100, LoopMode.Alternating), dir,
+          debug);
+      loopback(in, out, slot, "oneshot", rate, n -> new LoopPoints(n - 100, n - 100, LoopMode.Looping), dir, debug);
     }
     System.exit(0); // the midi system may leave threads running
   }
@@ -104,10 +122,13 @@ public class HardwareLoopback
     };
   }
 
-  static void loopback(MidiDevice.Info in, MidiDevice.Info out, int slot, double rate, Path dir, boolean debug)
-      throws Exception
+  /**
+   * @param loopFor the loop to send, for the number of samples after resampling
+   */
+  static void loopback(MidiDevice.Info in, MidiDevice.Info out, int slot, String name, double rate,
+      IntFunction<LoopPoints> loopFor, Path dir, boolean debug) throws Exception
   {
-    System.out.printf("%n=== %.1f Hz, %.0f Hz sine ===%n", rate, FREQUENCY);
+    System.out.printf("%n=== %s: %.1f Hz, %.0f Hz sine ===%n", name, rate, FREQUENCY);
     double[] sine = new double[NUM_SAMPLES];
     for (int i = 0; i < NUM_SAMPLES; i++)
     {
@@ -121,8 +142,9 @@ public class HardwareLoopback
     System.out.printf("  %s %.1f Hz (%s), %d samples%n", bandWidth.matches(rate) ? "already at" : "resampled to",
         tableRate, bandWidth.getDescription(), data.length);
     int[] encoded = SampleDump.normalizedAndScale(data, 12, 1., true);
-    SampleHeader sent = new SampleHeader(slot - 1, 12, (float) tableRate, data.length, 0, data.length - 100,
-        LoopMode.Looping);
+    LoopPoints loop = loopFor.apply(data.length);
+    SampleHeader sent = new SampleHeader(slot - 1, 12, (float) tableRate, data.length, loop.start(), loop.end(),
+        loop.mode());
 
     long start = System.currentTimeMillis();
     try (SampleTransfer transfer = new SampleTransfer(in, out, debug, false))
@@ -149,7 +171,8 @@ public class HardwareLoopback
         received.blocks());
     System.out.printf("  loop start    sent %7d     received %7d%n", sent.loopStart(), received.header().loopStart());
     System.out.printf("  loop end      sent %7d     received %7d%n", sent.loopEnd(), received.header().loopEnd());
-    System.out.printf("  mode          sent %7d     received %7d%n", sentHeader[18], received.headerBytes()[18]);
+    System.out.printf("  mode          sent %7d     received %7d   (%s)%n", sentHeader[18], received.headerBytes()[18],
+        received.header().loopMode());
     if (received.checksumErrors() > 0)
     {
       System.out.println("  CHECKSUM ERRORS: " + received.checksumErrors());
@@ -194,9 +217,19 @@ public class HardwareLoopback
     System.out.printf("  received file is labelled %.1f Hz, the sine in it plays at %.2f Hz (%+.1f cents)%n",
         receivedRate, played, 1200 * Math.log(played / FREQUENCY) / Math.log(2));
 
-    String name = String.format("%.0f", rate);
-    writeWav(dir.resolve(name + "-sent.wav").toFile(), sine, (float) rate);
-    writeWav(dir.resolve(name + "-received.wav").toFile(), received.data(), (float) receivedRate);
+    // save and load the received sample as Save/Load Sample does
+    SampleHeader header = received.header();
+    LoopPoints receivedLoop = new LoopPoints(header.loopStart(), header.loopEnd(), header.loopMode());
+    File receivedFile = dir.resolve(name + "-received.wav").toFile();
+    writeWav(receivedFile, received.data(), (float) receivedRate, receivedLoop.toWav());
+    List<WavLoop.Loop> wavLoops = WavLoop.readLoops(receivedFile);
+    LoopPoints loaded = LoopPoints.fromWav(wavLoops, 1., received.data().length);
+    System.out.printf("  received loop %s%s, saved as %s, loaded back as %s: %s%n", receivedLoop,
+        receivedLoop.oneShot() ? " (one shot)" : "", wavLoops, loaded,
+        loaded.equals(receivedLoop) || (loaded.oneShot() && receivedLoop.oneShot()) ? "same" : "DIFFERENT");
+    writeWav(dir.resolve(name + "-sent.wav").toFile(), sine, (float) rate,
+        new LoopPoints((int) Math.round(loop.start() * rate / tableRate),
+            (int) Math.round(loop.end() * rate / tableRate), loop.mode()).toWav());
   }
 
   /**
@@ -226,7 +259,7 @@ public class HardwareLoopback
     return periods / (last - first) * rate;
   }
 
-  static void writeWav(File file, double[] data, float rate) throws Exception
+  static void writeWav(File file, double[] data, float rate, List<WavLoop.Loop> loops) throws Exception
   {
     byte[] bytes = new byte[data.length * 2];
     for (int i = 0; i < data.length; i++)
@@ -238,7 +271,7 @@ public class HardwareLoopback
     AudioFormat format = new AudioFormat(rate, 16, 1, true, false);
     try (AudioInputStream stream = new AudioInputStream(new ByteArrayInputStream(bytes), format, data.length))
     {
-      AudioSystem.write(stream, AudioFileFormat.Type.WAVE, file);
+      WavLoop.write(stream, loops, file);
     }
   }
 }
