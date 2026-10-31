@@ -1,14 +1,13 @@
 plugins {
     id 'java'
     id 'application'    
-    id("com.github.johnrengelman.shadow") version "8.1.1"    
-    id("net.nemerosa.versioning") version "3.1.0"
+    id("com.gradleup.shadow") version "9.6.1"
+    id("net.nemerosa.versioning") version "4.0.1"
 }
 
-mainClassName = "axs7sds.SampleDump"
-
-sourceCompatibility = 21
-targetCompatibility = 21
+application {
+    mainClass = "axs7sds.SampleDump"
+}
 
 compileJava.options.encoding = "UTF-8"
 compileTestJava.options.encoding = "UTF-8"
@@ -19,7 +18,7 @@ repositories {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
   }
   
@@ -30,7 +29,7 @@ dependencies {
       exclude group: "org.jogamp.gluegen"
       exclude group: "com.googlecode.netlib-java"
     }
-    testImplementation group: 'junit', name: 'junit', version: '4.+'
+    testImplementation 'junit:junit:4.+'
     runtimeOnly 'com.formdev:flatlaf-intellij-themes:3.2.1'
 }
 

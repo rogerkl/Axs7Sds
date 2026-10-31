@@ -21,11 +21,11 @@ It should be possible to send the program tune parameter with sysex, so it could
 It would be possible to resample the audio data to the nearest supported samplerate as well, but that will be more work :-)
 
 ## Building
-The program is programmed in Java, minimum version Java 21.
+The program is programmed in Java, minimum version Java 25.
 You can start the build by running the gradle wrapper command.
 Make sure that you path to the Java SDK is set up
 
-    C:\Develop\Axs7Sds>set JAVA_HOME="C:\Develop\Java\jdk-21.0.3+9-windows-x64"
+    C:\Develop\Axs7Sds>set JAVA_HOME="C:\Develop\Java\jdk-25"
     C:\Develop\Axs7Sds>gradlew shadowJar
 
 You will get a runnable jar file in build\libs\Axs7Sds-all.jar
