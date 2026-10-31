@@ -4,16 +4,10 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.util.Arrays;
-import java.util.HexFormat;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
 
-import javax.sound.midi.MidiDevice;
-import javax.sound.midi.MidiMessage;
-import javax.sound.midi.MidiSystem;
-import javax.sound.midi.Receiver;
-import javax.sound.midi.SysexMessage;
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
@@ -26,9 +20,11 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
+import axs7sds.SampleTransfer.ReceivedSample;
 import axs7sds.convert.stream.ByteConvert;
 import axs7sds.convert.stream.ByteConvertFactory;
 import axs7sds.dsp.MammothFftLoop;
+import axs7sds.dsp.Resampler;
 import axs7sds.gui.SampleDumpPanel;
 import axs7sds.gui.SampleDumpPanel.PanelOperations;
 import axs7sds.gui.SampleDumpPanel.SampleFileInfo;
@@ -38,18 +34,13 @@ import axs7sds.midi.ByteConverter;
 @SuppressWarnings("serial")
 public class SampleDump extends JFrame implements PanelOperations
 {
-  private static final String              SAMPLE_HEADER      = "Sample Header";
-  private static final byte[]              ACC_HEADER_BLOCK   = {(byte) 0xF0, 0x7E, 0x7F, (byte) 0xF7};
-  private static final byte[]              REQUEST_SAMPLEDUMP = new byte[]{(byte) 0xF0, 0x7E, 0x0, 0x0, 0x0,
-      (byte) 0xF7};
   private SampleDumpPanel                  sampleDumpPanel;
   public final static int                  MAX_SAMPLES        = 32752;
   double[]                                 sampleData         = null;
   int                                      numSamples         = 0;
   private AudioFormat                      format;
-  ConcurrentLinkedQueue<MidiMessageRecord> messages           = new ConcurrentLinkedQueue<>();
-  private MidiDevice                       midiOut;
-  AtomicBoolean                            stopThread         = new AtomicBoolean();
+  /** set while a transmit or receive is running, so a second one is not started on top of it */
+  AtomicBoolean                            busy               = new AtomicBoolean();
   boolean                                  debug              = booleanProp("debug");
   boolean                                  trace              = booleanProp("trace");
   private SamplePanelParameters            samplePanelParameters;
@@ -141,6 +132,39 @@ public class SampleDump extends JFrame implements PanelOperations
     {
       return sampleRate;
     }
+
+    /**
+     * The sampler plays samples at these rates, a semitone apart. It rounds other rates down to one of them and
+     * keeps the rest as fine tune, which it applies in the wrong direction and leaves out of a sample dump, so
+     * samples are resampled to one of these rates before they are sent.
+     *
+     * @return the rate nearest in pitch, BW16 for rates above it
+     */
+    static BandWidth nearest(double sampleRate)
+    {
+      BandWidth nearest = BW16;
+      for (BandWidth bandWidth : values())
+      {
+        if (Math.abs(cents(sampleRate, bandWidth.sampleRate)) < Math.abs(cents(sampleRate, nearest.sampleRate)))
+        {
+          nearest = bandWidth;
+        }
+      }
+      return nearest;
+    }
+
+    /**
+     * @return true if the sample rate is this rate, within the precision of a wav file (whole Hz)
+     */
+    boolean matches(double sampleRate)
+    {
+      return Math.abs(cents(sampleRate, this.sampleRate)) < 1;
+    }
+
+    static double cents(double sampleRate, double reference)
+    {
+      return 1200 * Math.log(sampleRate / reference) / Math.log(2);
+    }
   }
 
   record SampleHeader(int sampleNumber, int bits, float sampleRate, int numSamples, int loopStart, int loopEnd,
@@ -171,12 +195,21 @@ public class SampleDump extends JFrame implements PanelOperations
       header[3] = (byte) sampleNumber; //smpnr
       header[4] = 0; //reserved
       header[5] = (byte) bits; //bits
-      ByteConverter.intTo3Bytes((int) (1000000000d / sampleRate), header, 6);
+      ByteConverter.intTo3Bytes(period(), header, 6);
       ByteConverter.intTo3Bytes(nunSamplesWithLoopFix(), header, 9);//loop trouble
       ByteConverter.intTo3Bytes(loopStart, header, 12);
       ByteConverter.intTo3Bytes(loopEnd, header, 15);
       header[18] = loopMode.code(); //looping
       return header;
+    }
+
+    /**
+     * @return the sampling period in ns, the exact table period if the rate is one of the sampler's
+     */
+    public int period()
+    {
+      BandWidth bandWidth = BandWidth.nearest(sampleRate);
+      return bandWidth.matches(sampleRate) ? bandWidth.getPeriod() : (int) (1000000000d / sampleRate);
     }
 
     public int nunSamplesWithLoopFix()
@@ -188,6 +221,14 @@ public class SampleDump extends JFrame implements PanelOperations
      * Offset value for 0 for number of bits in sampleHeader
      * @return
      */
+    /**
+     * The X7000 accepts periods from 15259 to 500000 ns, but has been seen sending garbage in this field
+     */
+    static boolean validPeriod(int period)
+    {
+      return period >= 15259 && period <= 500000;
+    }
+
     public int offsetValueFor0()
     {
       return normalizedAndScale(new double[]{0.}, bits, 1., true)[0];
@@ -203,10 +244,18 @@ public class SampleDump extends JFrame implements PanelOperations
       return numBlocks;
     }
 
+    /**
+     * @param header the header bytes, including the leading F0
+     */
     static public SampleHeader fromBytes(byte[] header)
     {
-      return null;
-      // TODO Auto-generated stub
+      int period = ByteConverter.intFrom3Bytes(header, 6);
+      return new SampleHeader(header[3], header[5],
+          validPeriod(period) ? (float) (1_000_000_000d / period) : (float) BandWidth.BW16.getSampleRate(),
+          ByteConverter.intFrom3Bytes(header, 9),
+          ByteConverter.intFrom3Bytes(header, 12),
+          ByteConverter.intFrom3Bytes(header, 15),
+          LoopMode.Looping);
     }
   }
 
@@ -246,57 +295,6 @@ public class SampleDump extends JFrame implements PanelOperations
     {
       return null;
       // TODO Auto-generated stub
-    }
-  }
-
-  record MidiMessageRecord(MidiMessage message, long timeStamp)
-  {}
-
-  public class SysexReceiver implements Receiver
-  {
-    public SysexReceiver()
-    {}
-
-    @Override
-    public void send(MidiMessage message, long timeStamp)
-    {
-      debug("sysexreceiver: " + message.toString() + ":" + message.getLength());
-      messages.add(new MidiMessageRecord(message, timeStamp));
-    }
-
-    @Override
-    public void close()
-    {}
-  }
-
-  class ReceiveThread extends Thread
-  {
-    @Override
-    public void run()
-    {
-      MidiDevice midiIn = null;
-      try
-      {
-        midiIn = MidiSystem.getMidiDevice(sampleDumpPanel.getSelectedMidiDeviceIn());
-        midiIn.getTransmitter().setReceiver(new SysexReceiver());
-        midiIn.open();
-
-        while (!stopThread.get())
-        {
-          Thread.sleep(10);
-        }
-      }
-      catch (Exception e)
-      {
-        e.printStackTrace();
-      }
-      finally
-      {
-        if (midiIn != null && midiIn.isOpen())
-        {
-          midiIn.close();
-        }
-      }
     }
   }
 
@@ -384,176 +382,120 @@ public class SampleDump extends JFrame implements PanelOperations
     System.exit(0);
   }
 
-  private void sendSysEx(String logText, byte[] message) throws Exception
+  /**
+   * Shows the progress of a transfer in a progress monitor
+   */
+  private static SampleTransfer.Progress progressFor(ProgressMonitor progressMonitor)
   {
-    try (Receiver rcvr = midiOut.getReceiver())
+    return new SampleTransfer.Progress()
     {
-      debug(logText);
-      SysexMessage sysMsg = new SysexMessage();
-      sysMsg.setMessage(message, message.length);
-      rcvr.send(sysMsg, -1);
-      trace("sent sysex: ");
-      trace(HexFormat.of().formatHex(message));
-    }
-  }
-
-  private boolean receiveSysEx(String logText, long start, long timeout) throws Exception
-  {
-    boolean ok = false;
-    while (!ok && (System.currentTimeMillis() - start) < timeout)
-    {
-      MidiMessageRecord poll = messages.poll();
-      if (poll != null)
+      @Override
+      public void update(String note, int value, int max)
       {
-        debug(logText + " " + poll.message().getLength());
-        if (poll.message instanceof SysexMessage s)
-        {
-          byte[] data = s.getData();
-          trace("received sysex: ");
-          trace(HexFormat.of().formatHex(data));
-          if (data.length > 18 && SAMPLE_HEADER.equals(logText))
-          {
-            //          0 0F0h B System-exclusive code
-            //          1 07Eh B Common non-realtime identifier
-            //          2 1 B SD, Sample dump code
-            //          3 N B LS, Sample number. Incoming sample will replace X7000's sample numbered N+1 where N is 0 to 5. if N>5, then the sample being edited will be replaced.
-            //          4 0 B Reserved (must be 0).
-            //          5 8-16 B Bits per sample word. X7000 transmits 12, but can accept 8 to 14.
-            //          6-8 0-127 TB Sampling period in nS. X7000 accepts 15259 to 500000. X7000 assumes the nominal pitch of samples is C3 (MIDI 60) unless a subsequent set of sample parameters specifies it otherwise.
-            //          9-11 0-127 TB Total words in sample. X7000 accepts 200 to 32752.
-            //          12-14 0-127 TB Loop start point. If it is >= Total word - 5, assume non-looping.
-            //          15-17 0-127 TB Loop end. X7000 takes this as sample end point. It takes the start point as 0, unless subsequent set of sample parameters specify it otherwise.
-            //          18 0-1 B Mode, 0=looping, 1=alternating (One shot, if loop length < 5).
-            //
-            debug(data[0]);
-            debug(data[1]);
-            debug(data[2]);
-            debug(data[3]);
-            debug(data[4]);
-            debug(data[5]);
-            debug(ByteConverter.intFrom3Bytes(data, 6));
-            debug(ByteConverter.intFrom3Bytes(data, 9));
-            debug(ByteConverter.intFrom3Bytes(data, 12));
-            debug(ByteConverter.intFrom3Bytes(data, 15));
-            debug(data[18]);
-          }
-          ok = true;
-        }
+        SwingUtilities.invokeLater(() -> {
+          progressMonitor.setMaximum(max);
+          progressMonitor.setNote(note);
+          progressMonitor.setProgress(value);
+        });
       }
-    }
-    return ok;
-  }
 
-  private void debug(double val)
-  {
-    if (debug)
-    {
-      System.out.println(val);
-    }
-  }
-
-  private void debug(byte val)
-  {
-    if (debug)
-    {
-      System.out.println(val);
-    }
-  }
-
-  private void debug(String message)
-  {
-    if (debug)
-    {
-      System.out.println(message);
-    }
-  }
-
-  @SuppressWarnings("unused")
-  private void trace(double val)
-  {
-    if (trace)
-    {
-      System.out.println(val);
-    }
-  }
-
-  @SuppressWarnings("unused")
-  private void trace(byte val)
-  {
-    if (trace)
-    {
-      System.out.println(val);
-    }
-  }
-
-  private void trace(String message)
-  {
-    if (trace)
-    {
-      System.out.println(message);
-    }
+      @Override
+      public boolean isCanceled()
+      {
+        return progressMonitor.isCanceled();
+      }
+    };
   }
 
   @Override
   public void receive()
   {
+    if (!busy.compareAndSet(false, true))
+    {
+      return;
+    }
     try
     {
       samplePanelParameters = sampleDumpPanel.getParameters();
-      stopThread.set(false);
-      new ReceiveThread().start();
-      midiOut = MidiSystem.getMidiDevice(sampleDumpPanel.getSelectedMidiDeviceOut());
-      midiOut.open();
+      ProgressMonitor progressMonitor = new ProgressMonitor(sampleDumpPanel, "Receiving data",
+          "Waiting for the sampler", 0, SampleBlock.NUM_BLOCKS + 1);
+      progressMonitor.setMillisToDecideToPopup(0);
+      progressMonitor.setMillisToPopup(0);
+      progressMonitor.setProgress(0);
+      new Thread(() -> _receive(progressMonitor)).start();
+    }
+    catch (RuntimeException e)
+    {
+      busy.set(false);
+      throw e;
+    }
+  }
 
-      REQUEST_SAMPLEDUMP[3] = (byte) samplePanelParameters.sampleNumber();
-
-      sendSysEx("Requesting sample dump", REQUEST_SAMPLEDUMP);
-      if (receiveSysEx(SAMPLE_HEADER, System.currentTimeMillis(), 20_000))
-      {
-        Thread.sleep(1);
-        sendSysEx("Acc", ACC_HEADER_BLOCK);
-        int count = 0;
-        long start = System.currentTimeMillis();
-        boolean ok = false;
-        do
+  public void _receive(ProgressMonitor progressMonitor)
+  {
+    try (SampleTransfer transfer = new SampleTransfer(sampleDumpPanel.getSelectedMidiDeviceIn(),
+        sampleDumpPanel.getSelectedMidiDeviceOut(), debug, trace))
+    {
+      ReceivedSample received = transfer.receive(samplePanelParameters.sampleNumber(), progressFor(progressMonitor));
+      SampleHeader sampleHeader = received.header();
+      int receivedSamples = received.data().length;
+      AudioFormat receivedFormat = new AudioFormat(sampleHeader.sampleRate(), 16, 1, true, false);
+      SwingUtilities.invokeLater(() -> {
+        progressMonitor.close();
+        sampleData = received.data();
+        numSamples = receivedSamples;
+        format = receivedFormat;
+        sampleDumpPanel.setSampleFile(new SampleFileInfo(null, 1, sampleHeader.sampleRate(), sampleHeader.bits(),
+            receivedSamples, "received sample #" + (sampleHeader.sampleNumber() + 1), sampleHeader.sampleRate()));
+        sampleDumpPanel.setNumSamples(receivedSamples);
+        sampleDumpPanel.setLoopStart(Math.min(sampleHeader.loopStart(), receivedSamples));
+        sampleDumpPanel.setLoopEnd(Math.min(sampleHeader.loopEnd(), receivedSamples));
+        if (receivedSamples < sampleHeader.numSamples() || received.checksumErrors() > 0 || !received.validPeriod())
         {
-          ok = receiveSysEx("Sample Data", start, 8_000);
-          if (ok)
-          {
-            Thread.sleep(1);
-            sendSysEx("Acc", ACC_HEADER_BLOCK);
-            count++;
-          }
+          JOptionPane.showMessageDialog(this, "Received " + receivedSamples + " of " + sampleHeader.numSamples()
+              + " samples, " + received.checksumErrors() + " blocks with checksum errors"
+              + (received.validPeriod() ? ""
+                  : "\nInvalid sample period in header (" + received.period() + " ns), assuming "
+                      + BandWidth.BW16.getSampleRate() + " Hz"));
         }
-        while (count < 546 && ok);
-        if (ok)
-        {
-          receiveSysEx("End transfer", System.currentTimeMillis(), 8_000);
-        }
-      }
+      });
+    }
+    catch (CancellationException e)
+    {
+      // cancelled by the user
     }
     catch (Exception e)
     {
       e.printStackTrace();
-      JOptionPane.showMessageDialog(this, e.getMessage());
+      SwingUtilities.invokeLater(() -> {
+        progressMonitor.close();
+        JOptionPane.showMessageDialog(this, e.getMessage());
+      });
     }
     finally
     {
-      if (midiOut != null && midiOut.isOpen())
-      {
-        midiOut.close();
-      }
-      midiOut = null;
-      stopThread.set(true);
+      busy.set(false);
     }
   }
 
   @Override
   public void transmit()
   {
-    samplePanelParameters = sampleDumpPanel.getParameters();
-    ProgressMonitor progressMonitor = new ProgressMonitor(sampleDumpPanel, "Sending data", "Start", 0, 547);
-    new Thread(() -> _transmit(progressMonitor)).start();
+    if (!busy.compareAndSet(false, true))
+    {
+      return;
+    }
+    try
+    {
+      samplePanelParameters = sampleDumpPanel.getParameters();
+      ProgressMonitor progressMonitor = new ProgressMonitor(sampleDumpPanel, "Sending data", "Start", 0, 547);
+      new Thread(() -> _transmit(progressMonitor)).start();
+    }
+    catch (RuntimeException e)
+    {
+      busy.set(false);
+      throw e;
+    }
   }
 
   /*
@@ -582,16 +524,11 @@ public class SampleDump extends JFrame implements PanelOperations
   */
   public void _transmit(ProgressMonitor progressMonitor)
   {
-    try
+    try (SampleTransfer transfer = new SampleTransfer(sampleDumpPanel.getSelectedMidiDeviceIn(),
+        sampleDumpPanel.getSelectedMidiDeviceOut(), debug, trace))
     {
-      stopThread.set(false);
-      new ReceiveThread().start();
-      midiOut = MidiSystem.getMidiDevice(sampleDumpPanel.getSelectedMidiDeviceOut());
-      midiOut.open();
-
       int bits = 12;
       SampleHeader sampleHeader = getSampleHeader(bits);
-      sendSysEx("Sending sample", sampleHeader.getBytes());
       double[] sampleDataCopy = getSampleDataWithXFade(sampleHeader);
 
       double max = 0.;
@@ -615,40 +552,19 @@ public class SampleDump extends JFrame implements PanelOperations
       System.out.println(max);
       System.out.println(normalize);
       int[] sampleDataNormalizedAndDithered = normalizedAndScale(sampleDataCopy, bits, normalize, true);
-
-      for (int i = 0; i < sampleHeader.numBlocks(); i++)
-      {
-        int fi = i;
-        SwingUtilities.invokeLater(() -> {
-          progressMonitor.setNote("packet #" + fi);
-          progressMonitor.setProgress(fi + 1);
-        });
-        byte[] data = new SampleBlock(sampleHeader, i, sampleDataNormalizedAndDithered).getBytes(i);
-        sendSysEx("Sending block# " + i, data);
-        if (!receiveSysEx("Wait Ack", System.currentTimeMillis(), 1000))
-        {
-          throw new Exception("no ack received!");
-        }
-      }
-      sendSysEx("End", new byte[]{(byte) 0xf7});
-      SwingUtilities.invokeLater(() -> {
-        progressMonitor.setNote("Finished");
-        progressMonitor.setProgress(547);
-      });
+      transfer.transmit(sampleHeader, sampleDataNormalizedAndDithered, progressFor(progressMonitor));
     }
     catch (Exception e)
     {
       e.printStackTrace();
-      JOptionPane.showMessageDialog(this, e.getMessage());
+      SwingUtilities.invokeLater(() -> {
+        progressMonitor.close();
+        JOptionPane.showMessageDialog(this, e.getMessage());
+      });
     }
     finally
     {
-      if (midiOut != null && midiOut.isOpen())
-      {
-        midiOut.close();
-      }
-      midiOut = null;
-      stopThread.set(true);
+      busy.set(false);
     }
   }
 
@@ -690,7 +606,7 @@ public class SampleDump extends JFrame implements PanelOperations
     return sampleDataCopy;
   }
 
-  private static int[] normalizedAndScale(double[] data, int bits, double normalize, boolean unsigned)
+  static int[] normalizedAndScale(double[] data, int bits, double normalize, boolean unsigned)
   {
     int[] outData = new int[data.length];
     double ranged2 = Math.pow(2.0, bits - 1);
@@ -766,23 +682,38 @@ public class SampleDump extends JFrame implements PanelOperations
       File selectedFile = fileChooser.getSelectedFile();
       try (AudioInputStream inputStream = AudioSystem.getAudioInputStream(selectedFile))
       {
-        format = inputStream.getFormat();
+        AudioFormat fileFormat = inputStream.getFormat();
+        BandWidth bandWidth = BandWidth.nearest(fileFormat.getSampleRate());
+        boolean resample = !bandWidth.matches(fileFormat.getSampleRate());
 
-        byte[] bytes = new byte[format.getFrameSize() * MAX_SAMPLES];
-        int read = inputStream.read(bytes, 0, format.getFrameSize() * MAX_SAMPLES);
-        numSamples = read / format.getFrameSize();
-
-        ByteConvert converter = ByteConvertFactory.createConverter(format);
-        double[][] convBuffer = new double[format.getChannels()][numSamples];
-        converter.fromBytes(bytes, convBuffer, numSamples);
-        sampleData = new double[numSamples];
-        for (int i = 0; i < numSamples; i++)
+        // read enough to fill the sampler after resampling, plus a little for the resampling filter
+        int frames = (int) Math.ceil(MAX_SAMPLES * fileFormat.getSampleRate() / bandWidth.getSampleRate()) + 200;
+        byte[] bytes = new byte[fileFormat.getFrameSize() * frames];
+        int read = 0;
+        int n;
+        while (read < bytes.length && (n = inputStream.read(bytes, read, bytes.length - read)) > 0)
         {
-          sampleData[i] = convBuffer[0][i];
+          read += n;
         }
+        int fileSamples = read / fileFormat.getFrameSize();
 
-        sampleDumpPanel.setSampleFile(new SampleFileInfo(selectedFile, format.getChannels(), format.getSampleRate(),
-            format.getSampleSizeInBits(), numSamples, format.getEncoding().toString()));
+        ByteConvert converter = ByteConvertFactory.createConverter(fileFormat);
+        double[][] convBuffer = new double[fileFormat.getChannels()][fileSamples];
+        converter.fromBytes(bytes, convBuffer, fileSamples);
+        double[] data = convBuffer[0];
+        if (resample)
+        {
+          data = Resampler.resample(data, fileFormat.getSampleRate(), bandWidth.getSampleRate());
+        }
+        sampleData = Arrays.copyOf(data, Math.min(data.length, MAX_SAMPLES));
+        numSamples = sampleData.length;
+        float sampleRate = (float) bandWidth.getSampleRate();
+        format = new AudioFormat(fileFormat.getEncoding(), sampleRate, fileFormat.getSampleSizeInBits(),
+            fileFormat.getChannels(), fileFormat.getFrameSize(), sampleRate, fileFormat.isBigEndian());
+
+        sampleDumpPanel.setSampleFile(new SampleFileInfo(selectedFile, fileFormat.getChannels(), sampleRate,
+            fileFormat.getSampleSizeInBits(), numSamples, fileFormat.getEncoding().toString(),
+            resample ? fileFormat.getSampleRate() : sampleRate));
         sampleDumpPanel.setNumSamples(numSamples);
         sampleDumpPanel.setLoopStart(0);
         sampleDumpPanel.setLoopEnd(numSamples - 100);

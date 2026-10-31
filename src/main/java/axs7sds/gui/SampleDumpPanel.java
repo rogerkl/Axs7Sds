@@ -54,8 +54,12 @@ public class SampleDumpPanel extends JPanel
 
   }
 
+  /**
+   * @param sampleRate the rate the sample is sent at
+   * @param originalSampleRate the rate of the file, if it has been resampled
+   */
   public record SampleFileInfo(File sampleFile, int channels, float sampleRate, int sampleSizeInBits, int numSamples,
-      String encoding)
+      String encoding, float originalSampleRate)
   {
     @Override
     public String toString()
@@ -535,7 +539,11 @@ public class SampleDumpPanel extends JPanel
     enableTransmit();
     enableSave();
     setSampleInfo(
-        "sample rate: " + ((int) sampleFileInfo.sampleRate()) + "\nbit size:" + sampleFileInfo.sampleSizeInBits()
+        "sample rate: " + ((int) sampleFileInfo.sampleRate())
+            + (sampleFileInfo.originalSampleRate() != sampleFileInfo.sampleRate()
+                ? " (resampled from " + ((int) sampleFileInfo.originalSampleRate()) + ")"
+                : "")
+            + "\nbit size:" + sampleFileInfo.sampleSizeInBits()
             + "\nlength (samples): " + sampleFileInfo.numSamples() + "\nencoding: " + sampleFileInfo.encoding());
   }
 

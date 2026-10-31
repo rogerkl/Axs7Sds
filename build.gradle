@@ -47,3 +47,13 @@ jar {
         )
     }
 }
+// Transmits test sines to the sampler and receives them back. Needs the hardware and overwrites the sample slot:
+// ./gradlew hardwareLoopback -Pdevice="XT [hw:0,0,0]" -Pslot=1 [-Prates=39555.4,48000] [-Pdebug=true]
+tasks.register('hardwareLoopback', JavaExec) {
+    group = 'verification'
+    description = 'Transmits test samples to the sampler and receives them back (needs the hardware)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'axs7sds.HardwareLoopback'
+    args = [project.findProperty('device') ?: 'XT', project.findProperty('slot') ?: '', project.findProperty('rates') ?: '']
+    systemProperty 'debug', project.findProperty('debug') ?: 'false'
+}
