@@ -1,3 +1,5 @@
+## Note: this has been replaced by [Axs7 virtual sampler]([http://example.com](https://github.com/rogerkl/Axs7))
+
 # Akai X7000/S700 sample dump
 Program to transfer samples via midi sample dump to/from Akai X7000 and S700 samplers. 
 Although seemingly based on the SDS standard, Akai did not follow it exactly so the samplers 
