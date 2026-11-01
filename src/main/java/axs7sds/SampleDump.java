@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
 import javax.sound.sampled.AudioFileFormat;
@@ -702,7 +703,8 @@ public class SampleDump extends JFrame implements PanelOperations
   public void saveSample()
   {
     samplePanelParameters = sampleDumpPanel.getParameters();
-    JFileChooser fileChooser = new JFileChooser();
+    Preferences prefs = Preferences.userNodeForPackage(SampleDump.class);
+    JFileChooser fileChooser = sampleFileChooser(prefs);
     fileChooser.setFileFilter(new FileNameExtensionFilter("Audio file",
         AudioFileFormat.Type.WAVE.getExtension(),
         AudioFileFormat.Type.AU.getExtension(),
@@ -711,6 +713,7 @@ public class SampleDump extends JFrame implements PanelOperations
         AudioFileFormat.Type.SND.getExtension()));
     if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION)
     {
+      rememberSampleDirectory(prefs, fileChooser.getSelectedFile());
       try
       {
         SampleHeader sampleHeader = getSampleHeader(12);
@@ -746,14 +749,51 @@ public class SampleDump extends JFrame implements PanelOperations
     }
   }
 
+  /** preference with the directory a sample was last loaded from or saved to */
+  static final String SAMPLE_DIRECTORY = "sampleDirectory";
+
+  /**
+   * @return a file chooser in the directory a sample was last loaded from or saved to, the user's default directory
+   *         if none is remembered, or the nearest existing parent if it is gone
+   */
+  static JFileChooser sampleFileChooser(Preferences prefs)
+  {
+    String path = prefs.get(SAMPLE_DIRECTORY, null);
+    File directory = path == null ? null : new File(path);
+    while (directory != null && !directory.isDirectory())
+    {
+      directory = directory.getParentFile();
+    }
+    return new JFileChooser(directory); // null gives the default directory
+  }
+
+  static void rememberSampleDirectory(Preferences prefs, File file)
+  {
+    File directory = file.getAbsoluteFile().getParentFile();
+    if (directory != null)
+    {
+      prefs.put(SAMPLE_DIRECTORY, directory.getPath());
+      try
+      {
+        prefs.flush();
+      }
+      catch (BackingStoreException e)
+      {
+        System.err.println("Could not store the sample directory: " + e.getMessage());
+      }
+    }
+  }
+
   @Override
   public void loadSample()
   {
-    JFileChooser fileChooser = new JFileChooser();
+    Preferences prefs = Preferences.userNodeForPackage(SampleDump.class);
+    JFileChooser fileChooser = sampleFileChooser(prefs);
     fileChooser.setFileFilter(new FileNameExtensionFilter("WAV file", "wav"));
     if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION)
     {
       File selectedFile = fileChooser.getSelectedFile();
+      rememberSampleDirectory(prefs, selectedFile);
       try (AudioInputStream inputStream = AudioSystem.getAudioInputStream(selectedFile))
       {
         AudioFormat fileFormat = inputStream.getFormat();
